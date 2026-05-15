@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>番茄钟</title>
+<style>
+  :root {
+    --work: #e74c3c;
+    --short-break: #2ecc71;
+    --long-break: #3498db;
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --text: #eee;
+    --muted: #888;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    user-select: none;
+  }
+  .container {
+    background: var(--card);
+    border-radius: 24px;
+    padding: 48px 40px 36px;
+    text-align: center;
+    width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 32px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 4px;
+  }
+  .tab {
+    flex: 1;
+    padding: 10px 8px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    background: transparent;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .tab.active {
+    background: rgba(255,255,255,0.12);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .timer-wrapper {
+    position: relative;
+    width: 260px;
+    height: 260px;
+    margin: 0 auto 28px;
+  }
+  canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .time-display {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 56px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 2px;
+  }
+  .phase-label {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: -8px;
+    margin-bottom: 24px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+  }
+  .controls { display: flex; gap: 12px; justify-content: center; margin-bottom: 28px; }
+  .btn {
+    padding: 12px 28px;
+    border: none;
+    border-radius: 30px;
+    font-size: 15px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+    font-family: inherit;
+    color: #fff;
+  }
+  .btn:active { transform: scale(0.96); }
+  .btn-start {
+    background: var(--work);
+    box-shadow: 0 6px 20px rgba(231,76,60,0.35);
+  }
+  .btn-pause { background: #f39c12; }
+  .btn-reset {
+    background: transparent;
+    border: 2px solid rgba(255,255,255,0.25);
+    color: var(--muted);
+  }
+  .stats {
+    display: flex;
+    justify-content: center;
+    gap: 28px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .stat strong { color: var(--text); font-size: 18px; display: block; }
+  .session-dots {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+  .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    transition: background 0.3s;
+  }
+  .dot.done { background: var(--work); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="tabs">
+    <button class="tab active" data-mode="work">番茄工作</button>
+    <button class="tab" data-mode="short">短休息</button>
+    <button class="tab" data-mode="long">长休息</button>
+  </div>
+
+  <div class="timer-wrapper">
+    <canvas id="ring" width="260" height="260"></canvas>
+    <div class="time-display" id="time">25:00</div>
+  </div>
+  <div class="phase-label" id="phaseLabel">专注工作</div>
+
+  <div class="controls">
+    <button class="btn btn-start" id="btnStart">开始</button>
+    <button class="btn btn-reset" id="btnReset">重置</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><strong id="todayCount">0</strong>今日番茄</div>
+    <div class="stat"><strong id="totalMinutes">0</strong>累计分钟</div>
+  </div>
+  <div class="session-dots" id="dots"></div>
+</div>
+
+<audio id="tickSound" preload="auto"></audio>
+<audio id="alarmSound" preload="auto"></audio>
+
+<script>
+const DURATIONS = { work: 25 * 60, short: 5 * 60, long: 15 * 60 };
+const LABELS = { work: '专注工作', short: '短休息', long: '长休息' };
+const COLORS = { work: '#e74c3c', short: '#2ecc71', long: '#3498db' };
+const RING_COLOR = { work: '#e74c3c', short: '#2ecc71', long: '#3498db' };
+
+let mode = 'work';
+let totalSeconds = DURATIONS.work;
+let remaining = totalSeconds;
+let running = false;
+let intervalId = null;
+let todayPomodoros = 0;
+let todayMinutes = 0;
+let sessionDone = [false, false, false, false];
+
+// Load state from localStorage
+function loadState() {
+  const saved = localStorage.getItem('pomodoro_state');
+  if (saved) {
+    const s = JSON.parse(saved);
+    todayPomodoros = s.pomodoros || 0;
+    todayMinutes = s.minutes || 0;
+    sessionDone = s.dots || [false, false, false, false];
+    const today = new Date().toDateString();
+    if (s.date !== today) {
+      todayPomodoros = 0;
+      todayMinutes = 0;
+      sessionDone = [false, false, false, false];
+    }
+  }
+}
+function saveState() {
+  localStorage.setItem('pomodoro_state', JSON.stringify({
+    date: new Date().toDateString(),
+    pomodoros: todayPomodoros,
+    minutes: todayMinutes,
+    dots: sessionDone,
+  }));
+}
+
+// Canvas ring
+const canvas = document.getElementById('ring');
+const ctx = canvas.getContext('2d');
+const size = 260;
+const half = size / 2;
+const radius = 110;
+const lineWidth = 12;
+
+function drawRing(progress) {
+  ctx.clearRect(0, 0, size, size);
+  const color = COLORS[mode];
+  // Background track
+  ctx.beginPath();
+  ctx.arc(half, half, radius, -Math.PI / 2, Math.PI * 1.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  // Progress arc
+  if (progress > 0) {
+    ctx.beginPath();
+    ctx.arc(half, half, radius, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+}
+
+function fmt(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function updateDisplay() {
+  document.getElementById('time').textContent = fmt(remaining);
+  drawRing(1 - remaining / totalSeconds);
+  document.getElementById('todayCount').textContent = todayPomodoros;
+  document.getElementById('totalMinutes').textContent = todayMinutes;
+  document.getElementById('phaseLabel').textContent = LABELS[mode];
+  document.getElementById('btnStart').textContent = running ? '暂停' : '开始';
+  document.getElementById('btnStart').className = running ? 'btn btn-pause' : 'btn btn-start';
+
+  const dots = document.querySelectorAll('.dot');
+  dots.forEach((d, i) => {
+    d.className = 'dot' + (sessionDone[i] ? ' done' : '');
+  });
+}
+
+function initDots() {
+  const container = document.getElementById('dots');
+  container.innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'dot' + (sessionDone[i] ? ' done' : '');
+    container.appendChild(dot);
+  }
+}
+
+function beep(freq, duration) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.3, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + duration);
+}
+
+function playAlarm() {
+  [800, 1000, 1200].forEach((f, i) => {
+    setTimeout(() => beep(f, 0.3), i * 180);
+  });
+  setTimeout(() => {
+    [800, 1000, 1200].forEach((f, i) => {
+      setTimeout(() => beep(f, 0.3), i * 180);
+    });
+  }, 700);
+}
+
+function finish() {
+  running = false;
+  clearInterval(intervalId);
+  intervalId = null;
+  remaining = 0;
+  updateDisplay();
+  playAlarm();
+
+  if (mode === 'work') {
+    todayPomodoros++;
+    const idx = todayPomodoros % 4;
+    const slot = idx === 0 ? 3 : idx - 1;
+    sessionDone[slot] = true;
+    todayMinutes += 25;
+    if (sessionDone.every(Boolean)) sessionDone = [false, false, false, false];
+  }
+
+  saveState();
+  switchMode(mode);
+  updateDisplay();
+}
+
+function tick() {
+  if (remaining <= 0) {
+    finish();
+    return;
+  }
+  remaining--;
+  updateDisplay();
+}
+
+function switchMode(newMode) {
+  running = false;
+  clearInterval(intervalId);
+  intervalId = null;
+  mode = newMode;
+  totalSeconds = DURATIONS[mode];
+  remaining = totalSeconds;
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.mode === mode);
+  });
+  updateDisplay();
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => switchMode(tab.dataset.mode));
+});
+
+document.getElementById('btnStart').addEventListener('click', () => {
+  if (running) {
+    running = false;
+    clearInterval(intervalId);
+    intervalId = null;
+    updateDisplay();
+  } else {
+    if (remaining <= 0) {
+      remaining = totalSeconds;
+    }
+    running = true;
+    intervalId = setInterval(tick, 1000);
+    updateDisplay();
+  }
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  running = false;
+  clearInterval(intervalId);
+  intervalId = null;
+  remaining = totalSeconds;
+  updateDisplay();
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    document.getElementById('btnStart').click();
+  } else if (e.code === 'KeyR') {
+    document.getElementById('btnReset').click();
+  } else if (e.code === 'Digit1') {
+    switchMode('work');
+  } else if (e.code === 'Digit2') {
+    switchMode('short');
+  } else if (e.code === 'Digit3') {
+    switchMode('long');
+  }
+});
+
+loadState();
+initDots();
+switchMode('work');
+</script>
+</body>
+</html>
