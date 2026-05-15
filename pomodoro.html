@@ -21,9 +21,77 @@
     color: var(--text);
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: stretch;
+    gap: 24px;
     min-height: 100vh;
+    padding: 24px;
     user-select: none;
+  }
+  .file-panel {
+    flex: 1;
+    min-width: 0;
+    max-width: 520px;
+    background: var(--card);
+    border-radius: 24px;
+    padding: 24px 20px 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    display: flex;
+    flex-direction: column;
+    align-self: center;
+    max-height: calc(100vh - 48px);
+  }
+  .file-panel h2 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .file-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .file-toolbar input[type="file"] {
+    font-size: 13px;
+    color: var(--muted);
+    max-width: 100%;
+  }
+  .file-name {
+    font-size: 12px;
+    color: var(--muted);
+    word-break: break-all;
+    min-height: 1.2em;
+  }
+  .file-content {
+    flex: 1;
+    min-height: 200px;
+    overflow: auto;
+    margin-top: 8px;
+    padding: 14px 16px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    user-select: text;
+    font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  }
+  .file-content.empty {
+    color: var(--muted);
+    font-family: inherit;
+    white-space: normal;
+  }
+  .main-col {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
   .container {
     background: var(--card);
@@ -126,9 +194,30 @@
     transition: background 0.3s;
   }
   .dot.done { background: var(--work); }
+  @media (max-width: 900px) {
+    body {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .file-panel {
+      max-width: none;
+      max-height: 42vh;
+      align-self: stretch;
+    }
+    .main-col { align-self: center; }
+  }
 </style>
 </head>
 <body>
+<div class="file-panel" id="filePanel">
+  <h2>文件内容</h2>
+  <div class="file-toolbar">
+    <input type="file" id="fileInput" accept="*/*" />
+  </div>
+  <div class="file-name" id="fileName"></div>
+  <div class="file-content empty" id="fileContent">选择本地文件后，其文本内容将显示在此处。支持拖放文件到本区域。</div>
+</div>
+<div class="main-col">
 <div class="container">
   <div class="tabs">
     <button class="tab active" data-mode="work">番茄工作</button>
@@ -152,6 +241,7 @@
     <div class="stat"><strong id="totalMinutes">0</strong>累计分钟</div>
   </div>
   <div class="session-dots" id="dots"></div>
+</div>
 </div>
 
 <audio id="tickSound" preload="auto"></audio>
@@ -373,6 +463,56 @@ document.addEventListener('keydown', e => {
 loadState();
 initDots();
 switchMode('work');
+
+// Left panel: show selected file text
+const fileInput = document.getElementById('fileInput');
+const fileContentEl = document.getElementById('fileContent');
+const fileNameEl = document.getElementById('fileName');
+const filePanel = document.getElementById('filePanel');
+
+function showFileText(name, text) {
+  fileNameEl.textContent = name || '';
+  if (!name) {
+    fileContentEl.textContent = '选择本地文件后，其文本内容将显示在此处。支持拖放文件到本区域。';
+    fileContentEl.classList.add('empty');
+    return;
+  }
+  fileContentEl.textContent = text === '' ? '（文件为空）' : text;
+  fileContentEl.classList.toggle('empty', text === '');
+}
+
+function readFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = reader.result;
+    const text = typeof result === 'string' ? result : '';
+    showFileText(file.name, text);
+  };
+  reader.onerror = () => {
+    showFileText(file.name, '无法读取该文件。');
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files && fileInput.files[0];
+  if (f) readFile(f);
+});
+
+filePanel.addEventListener('dragover', e => {
+  e.preventDefault();
+  filePanel.style.outline = '2px dashed rgba(255,255,255,0.25)';
+});
+filePanel.addEventListener('dragleave', () => {
+  filePanel.style.outline = 'none';
+});
+filePanel.addEventListener('drop', e => {
+  e.preventDefault();
+  filePanel.style.outline = 'none';
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) readFile(f);
+});
 </script>
 </body>
 </html>
